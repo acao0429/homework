@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>作業檢核器 Pro - 專業教學管理工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f1f5f9;
+        }
+
+        .status-none { background-color: #ffffff; border: 1px solid #e2e8f0; }
+        .status-submitted { background-color: #dcfce7; border: 2px solid #22c55e; color: #166534; }
+        .status-passed { background-color: #dbeafe; border: 2px solid #3b82f6; color: #1e40af; }
+        .status-correction { background-color: #fee2e2; border: 2px solid #ef4444; color: #991b1b; }
+
+        .idle-overlay {
+            backdrop-filter: blur(8px);
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+
+        .grid-item {
+            aspect-ratio: 1 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .grid-item:active { transform: scale(0.9); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="p-4 md:p-8 max-w-4xl mx-auto">
+
+    <!-- 鎖定畫面 -->
+    <div id="lockScreen" class="fixed inset-0 z-50 idle-overlay flex flex-col items-center justify-center text-white p-6 hidden">
+        <div class="bg-white text-gray-800 p-8 rounded-3xl shadow-2xl w-full max-w-sm text-center">
+            <div class="mb-4 text-5xl">🔒</div>
+            <h2 class="text-2xl font-bold mb-2">系統已鎖定</h2>
+            <p class="text-gray-500 mb-6">請輸入解鎖密碼</p>
+            <input type="password" id="unlockPwd" class="w-full border-2 border-gray-200 rounded-xl p-3 mb-4 text-center text-xl focus:border-blue-500 outline-none" placeholder="預設: 1234">
+            <button onclick="unlockSystem()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition">解除鎖定</button>
+            <p id="lockError" class="text-red-500 mt-3 text-sm hidden">密碼錯誤</p>
+        </div>
+    </div>
+
+    <!-- 主頁面標題與日期切換 -->
+    <header class="mb-6">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+            <div>
+                <h1 class="text-3xl font-black text-gray-800 tracking-tight">作業檢核 <span class="text-blue-600">Pro</span></h1>
+                <p class="text-sm text-gray-400 font-medium mt-1">智慧紀錄模式：全班空白之科目不列入統計</p>
+            </div>
+            
+            <!-- 日期選擇器 -->
+            <div class="bg-white p-2 rounded-2xl shadow-sm border border-gray-200 flex items-center gap-3">
+                <span class="text-sm font-bold text-gray-500 ml-2">檢核日期:</span>
+                <input type="date" id="currentDatePicker" onchange="changeDate()" class="bg-gray-50 border-none rounded-xl p-2 font-bold text-blue-700 outline-none cursor-pointer">
+                <button onclick="lockSystem()" class="bg-gray-100 p-2 rounded-xl hover:bg-gray-200 transition">🔒</button>
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2 text-sm text-gray-500 items-center">
+            <span class="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">資料自動儲存</span>
+            <span id="currentTime" class="ml-auto font-mono"></span>
+        </div>
+    </header>
+
+    <!-- 工具欄 -->
+    <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-8">
+        <button onclick="showSummary()" class="flex flex-col items-center justify-center p-3 bg-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition">
+            <span class="text-xl mb-1">📋</span>
+            <span class="text-[10px] md:text-xs font-bold text-gray-600">當日未交</span>
+        </button>
+        <button onclick="showMonthlySummary()" class="flex flex-col items-center justify-center p-3 bg-blue-50 rounded-2xl shadow-sm border border-blue-100 hover:shadow-md transition">
+            <span class="text-xl mb-1">📅</span>
+            <span class="text-[10px] md:text-xs font-bold text-blue-700">當月未交</span>
+        </button>
+        <button onclick="exportToExcel()" class="flex flex-col items-center justify-center p-3 bg-green-600 rounded-2xl shadow-lg hover:bg-green-700 transition text-white">
+            <span class="text-xl mb-1">📊</span>
+            <span class="text-[10px] md:text-xs font-bold">匯出 Excel</span>
+        </button>
+        <button onclick="exportData()" class="flex flex-col items-center justify-center p-3 bg-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition">
+            <span class="text-xl mb-1">📤</span>
+            <span class="text-[10px] md:text-xs font-bold text-gray-600">完整備份</span>
+        </button>
+        <button onclick="importData()" class="flex flex-col items-center justify-center p-3 bg-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition">
+            <span class="text-xl mb-1">📥</span>
+            <span class="text-[10px] md:text-xs font-bold text-gray-600">還原資料</span>
+        </button>
+        <button onclick="showConfig()" class="flex flex-col items-center justify-center p-3 bg-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition">
+            <span class="text-xl mb-1">⚙️</span>
+            <span class="text-[10px] md:text-xs font-bold text-gray-600">系統設定</span>
+        </button>
+    </div>
+
+    <!-- 快速檢查：今日聯絡簿 -->
+    <section class="bg-white rounded-3xl p-6 shadow-sm mb-8 border border-gray-100">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold text-gray-800 flex items-center">
+                <span class="bg-yellow-400 w-2 h-6 rounded-full mr-3"></span>
+                聯絡簿 / 出缺席狀態
+            </h2>
+            <button onclick="resetDailyCheck()" class="text-xs text-red-500 font-bold px-3 py-1 border border-red-100 rounded-full hover:bg-red-50">清空本日</button>
+        </div>
+        <p class="text-xs text-gray-400 mb-4 italic">點擊：已交(綠) / 右鍵：缺席(紅)</p>
+        <div id="dailyGrid" class="grid grid-cols-6 sm:grid-cols-10 gap-2"></div>
+    </section>
+
+    <!-- 科目管理區 -->
+    <section class="mb-8">
+        <div class="flex justify-between items-start mb-4">
+            <h2 class="text-lg font-bold text-gray-800 flex items-center pt-2">
+                <span class="bg-blue-600 w-2 h-6 rounded-full mr-3"></span>
+                科目檢核區
+            </h2>
+            <button onclick="showAddSubjectModal()" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg shadow-blue-200">+ 新增科目</button>
+        </div>
+        
+        <div id="subjectTabs" class="flex flex-wrap gap-2 mb-6"></div>
+
+        <div id="checkPanel" class="bg-white rounded-3xl p-6 shadow-md border-t-4 border-blue-500 relative">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h3 id="activeSubjectName" class="text-xl font-bold text-gray-800">--</h3>
+                    <p class="text-xs text-gray-400 mt-1">循環：空白 → 已交 → 通過 → 沒訂正</p>
+                </div>
+                <button onclick="deleteActiveSubject()" class="p-2 text-gray-300 hover:text-red-500 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                </button>
+            </div>
+            <div id="studentGrid" class="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-3"></div>
+        </div>
+    </section>
+
+    <!-- 彈窗控制 (Modals) -->
+    <div id="modalOverlay" class="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4 hidden">
+        <div id="modalContent" class="bg-white rounded-3xl w-full max-w-lg p-8 shadow-2xl max-h-[80vh] overflow-y-auto"></div>
+    </div>
+
+    <script>
+        const APP_ID = 'HomeworkTrackerPro_HistoryMode_v1';
+        const defaultSubjectNames = [
+            '國語習作', '數學習作', '國語甲本', '國語乙本', '國語練習本', 
+            '數學練習本', '國語考卷', '數學考卷', '作文', '自然作業(考卷)', 
+            '社會作業(考卷)', '英文作業(考卷)', '回條', '班費', '其它'
+        ];
+
+        let state = {
+            config: { studentList: Array.from({length: 30}, (_, i) => i + 1), password: '1234' },
+            subjects: [], 
+            history: {},  
+            activeSubjectId: null,
+            currentDate: new Date().toISOString().split('T')[0]
+        };
+
+        function initDefaultSubjects() {
+            return defaultSubjectNames.map((name, index) => ({
+                id: 'sub_' + (Date.now() + index),
+                name: name
+            }));
+        }
+
+        function loadData() {
+            const saved = localStorage.getItem(APP_ID);
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    state.config = parsed.config || state.config;
+                    state.subjects = parsed.subjects || [];
+                    state.history = parsed.history || {};
+                } catch(e) { console.error("Load fail"); }
+            }
+            
+            if (state.subjects.length === 0) {
+                state.subjects = initDefaultSubjects();
+            }
+            if (state.subjects.length > 0 && !state.activeSubjectId) {
+                state.activeSubjectId = state.subjects[0].id;
+            }
+            
+            const datePicker = document.getElementById('currentDatePicker');
+            if (datePicker) {
+                datePicker.value = state.currentDate;
+            }
+            
+            renderAll();
+        }
+
+        function saveData() { localStorage.setItem(APP_ID, JSON.stringify(state)); }
+
+        function getDayData(dateStr = state.currentDate) {
+            if (!state.history[dateStr]) {
+                state.history[dateStr] = {
+                    dailyCheck: {},
+                    subjectData: {} 
+                };
+            }
+            return state.history[dateStr];
+        }
+
+        function changeDate() {
+            const datePicker = document.getElementById('currentDatePicker');
+            if (datePicker) {
+                state.currentDate = datePicker.value;
+                renderAll();
+            }
+        }
+
+        function renderAll() {
+            renderDailyGrid();
+            renderSubjectTabs();
+            renderStudentGrid();
+            updateTime();
+        }
+
+        function renderDailyGrid() {
+            const day = getDayData();
+            const container = document.getElementById('dailyGrid');
+            if (!container) return;
+            container.innerHTML = '';
+            state.config.studentList.forEach(num => {
+                const div = document.createElement('div');
+                div.className = `grid-item rounded-xl text-sm transition-all ${getDailyClass(day.dailyCheck[num] || 0)}`;
+                div.innerText = num;
+                div.onclick = () => { 
+                    day.dailyCheck[num] = day.dailyCheck[num] === 1 ? 0 : 1; 
+                    saveData(); renderDailyGrid(); 
+                };
+                div.oncontextmenu = (e) => { 
+                    e.preventDefault(); 
+                    day.dailyCheck[num] = day.dailyCheck[num] === 2 ? 0 : 2; 
+                    saveData(); renderDailyGrid(); 
+                };
+                container.appendChild(div);
+            });
+        }
+
+        function getDailyClass(val) {
+            if (val === 1) return 'bg-green-500 text-white border-green-600 shadow-md';
+            if (val === 2) return 'bg-red-500 text-white border-red-600 shadow-md';
+            return 'bg-gray-100 text-gray-400 border-gray-200 hover:border-gray-300';
+        }
+
+        function resetDailyCheck() {
+            showConfirmModal(`確定要清空 ${state.currentDate} 的聯絡簿紀錄嗎？`, () => {
+                const day = getDayData();
+                day.dailyCheck = {}; saveData(); renderDailyGrid();
+            });
+        }
+
+        function renderSubjectTabs() {
+            const container = document.getElementById('subjectTabs');
+            if (!container) return;
+            container.innerHTML = '';
+            state.subjects.forEach(sub => {
+                const btn = document.createElement('button');
+                const isActive = state.activeSubjectId === sub.id;
+                btn.className = `px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
+                    isActive 
+                    ? 'bg-blue-600 text-white border-blue-700 shadow-md transform scale-105 z-10' 
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                }`;
+                btn.innerText = sub.name;
+                btn.onclick = () => { state.activeSubjectId = sub.id; renderAll(); };
+                container.appendChild(btn);
+            });
+        }
+
+        function renderStudentGrid() {
+            const container = document.getElementById('studentGrid');
+            const subNameEl = document.getElementById('activeSubjectName');
+            if (!container || !subNameEl) return;
+
+            const subDef = state.subjects.find(s => s.id === state.activeSubjectId);
+            if (!subDef) { container.innerHTML = ''; subNameEl.innerText = '--'; return; }
+            
+            subNameEl.innerText = subDef.name;
+            const day = getDayData();
+            if (!day.subjectData[subDef.id]) day.subjectData[subDef.id] = {};
+            const currentSubData = day.subjectData[subDef.id];
+
+            container.innerHTML = '';
+            state.config.studentList.forEach(num => {
+                const status = currentSubData[num] || 0;
+                const div = document.createElement('div');
+                div.className = `grid-item rounded-2xl text-lg shadow-sm transition-all ${getStatusClass(status)}`;
+                div.innerText = num;
+                div.onclick = () => { 
+                    currentSubData[num] = (status + 1) % 4; 
+                    saveData(); renderStudentGrid(); 
+                };
+                container.appendChild(div);
+            });
+        }
+
+        function getStatusClass(status) {
+            switch(status) {
+                case 1: return 'status-submitted';
+                case 2: return 'status-passed';
+                case 3: return 'status-correction';
+                default: return 'status-none hover:border-blue-200';
+            }
+        }
+
+        // 輔助工具：檢查某科目在某日是否「有被點選過」(代表當天有出這項作業)
+        function isSubjectAssigned(dayData, subId) {
+            const data = dayData.subjectData[subId];
+            if (!data) return false;
+            // 只要有一個學生的狀態不是 0，就代表當天有出作業
+            return state.config.studentList.some(num => (data[num] || 0) > 0);
+        }
+
+        // 輔助工具：檢查聯絡簿在某日是否「有被點選過」
+        function isDailyCheckAssigned(dayData) {
+            return state.config.studentList.some(num => (dayData.dailyCheck[num] || 0) > 0);
+        }
+
+        function exportToExcel() {
+            const day = getDayData();
+            const rows = [['檢核日期：', state.currentDate], []];
+            const headers = ['座號', '聯絡簿', ...state.subjects.map(s => s.name)];
+            rows.push(headers);
+
+            state.config.studentList.forEach(num => {
+                const row = [num];
+                row.push((day.dailyCheck[num] || 0) === 1 ? '' : 'x'); 
+                state.subjects.forEach(sub => {
+                    const status = (day.subjectData[sub.id] || {})[num] || 0;
+                    row.push((status === 0 || status === 3) ? 'x' : '');
+                });
+                rows.push(row);
+            });
+
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            XLSX.utils.book_append_sheet(wb, ws, "檢核表");
+            XLSX.writeFile(wb, `作業檢核_${state.currentDate}.xlsx`);
+        }
+
+        function showAddSubjectModal() {
+            const overlay = document.getElementById('modalOverlay');
+            const content = document.getElementById('modalContent');
+            if (!overlay || !content) return;
+            content.innerHTML = `
+                <h2 class="text-2xl font-bold mb-6">新增檢核科目</h2>
+                <input type="text" id="newSubName" class="w-full border-2 rounded-xl p-3 mb-6 focus:border-blue-500 outline-none" placeholder="輸入名稱 (例如: 數作一回)">
+                <div class="flex gap-3">
+                    <button onclick="closeModal()" class="flex-1 bg-gray-100 py-3 rounded-xl font-bold text-gray-500">取消</button>
+                    <button onclick="confirmAddSubject()" class="flex-1 bg-blue-600 py-3 rounded-xl font-bold text-white shadow-lg">確定新增</button>
+                </div>`;
+            overlay.classList.remove('hidden');
+            setTimeout(() => {
+                const input = document.getElementById('newSubName');
+                if (input) input.focus();
+            }, 100);
+        }
+
+        function confirmAddSubject() {
+            const input = document.getElementById('newSubName');
+            const name = input ? input.value.trim() : "";
+            if (name) {
+                const id = 'sub_' + Date.now();
+                state.subjects.push({ id, name });
+                state.activeSubjectId = id;
+                saveData(); renderAll(); closeModal();
+            }
+        }
+
+        function deleteActiveSubject() {
+            const sub = state.subjects.find(s => s.id === state.activeSubjectId);
+            if (!sub) return;
+            showConfirmModal(`確定要刪除「${sub.name}」這個項目嗎？(這會移除所有日期的該項記錄)`, () => {
+                state.subjects = state.subjects.filter(s => s.id !== state.activeSubjectId);
+                state.activeSubjectId = state.subjects.length > 0 ? state.subjects[0].id : null;
+                saveData(); renderAll();
+            });
+        }
+
+        // 當日未交統計 (修正：過濾未出作業之科目)
+        function showSummary() {
+            const day = getDayData();
+            const overlay = document.getElementById('modalOverlay');
+            const content = document.getElementById('modalContent');
+            if (!overlay || !content) return;
+
+            let html = `<h2 class="text-2xl font-bold mb-6">📋 ${state.currentDate} 未交統計</h2>`;
+            
+            // 預先判定哪些項目是當天有出的作業
+            const assignedDailyCheck = isDailyCheckAssigned(day);
+            const assignedSubs = state.subjects.filter(sub => isSubjectAssigned(day, sub.id));
+
+            state.config.studentList.forEach(num => {
+                let missing = [];
+                // 只有當天有記錄聯絡簿時，才檢查沒勾選的人
+                if (assignedDailyCheck && (day.dailyCheck[num] || 0) !== 1) missing.push('聯絡簿');
+                
+                // 只檢查當天有出作業的科目
+                assignedSubs.forEach(sub => {
+                    const status = (day.subjectData[sub.id] || {})[num] || 0;
+                    if (status === 0 || status === 3) missing.push(sub.name);
+                });
+                
+                if (missing.length > 0) {
+                    html += `<div class="mb-3 p-4 bg-red-50 rounded-2xl border border-red-100">
+                                <div class="font-bold text-red-800">${num} 號</div>
+                                <div class="text-[11px] text-red-600 mt-1">缺漏項目：${missing.join('、')}</div>
+                             </div>`;
+                }
+            });
+
+            if (html.length < 100) html += `<p class="text-center py-8 text-gray-400">當日作業皆已交齊！🎉</p>`;
+            html += `<button onclick="closeModal()" class="w-full bg-gray-800 text-white py-3 rounded-xl font-bold mt-4">關閉</button>`;
+            content.innerHTML = html;
+            overlay.classList.remove('hidden');
+        }
+
+        // 當月未交統計 (修正：逐日判定該科目是否派發)
+        function showMonthlySummary() {
+            const overlay = document.getElementById('modalOverlay');
+            const content = document.getElementById('modalContent');
+            if (!overlay || !content) return;
+
+            const currentMonthPrefix = state.currentDate.substring(0, 7);
+            const monthDisplay = state.currentDate.split('-').slice(0, 2).join(' / ');
+            const monthDates = Object.keys(state.history).filter(d => d.startsWith(currentMonthPrefix)).sort();
+
+            let html = `<h2 class="text-2xl font-bold mb-2">📅 ${monthDisplay} 月度未交總覽</h2>`;
+            html += `<p class="text-[10px] text-gray-400 mb-6 font-medium">智慧偵測：僅統計全班有勾選紀錄之作業項目</p>`;
+            
+            let foundAnyMissing = false;
+
+            state.config.studentList.forEach(num => {
+                let studentMissingEntries = [];
+
+                monthDates.forEach(dateStr => {
+                    const day = state.history[dateStr];
+                    let dailyMissing = [];
+
+                    // 檢查當天是否有出作業
+                    const assignedDailyCheck = isDailyCheckAssigned(day);
+
+                    if (assignedDailyCheck && (day.dailyCheck[num] || 0) !== 1) dailyMissing.push('聯絡簿');
+
+                    state.subjects.forEach(sub => {
+                        // 智慧判定：該科目在該日期「全班皆無紀錄」則視為未派作業
+                        if (isSubjectAssigned(day, sub.id)) {
+                            const status = (day.subjectData[sub.id] || {})[num] || 0;
+                            if (status === 0 || status === 3) dailyMissing.push(sub.name);
+                        }
+                    });
+
+                    if (dailyMissing.length > 0) {
+                        studentMissingEntries.push({ date: dateStr.split('-')[2], items: dailyMissing });
+                    }
+                });
+
+                if (studentMissingEntries.length > 0) {
+                    foundAnyMissing = true;
+                    html += `
+                        <div class="mb-4 p-4 bg-white rounded-2xl border-2 border-red-50 shadow-sm">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-black text-red-600 text-lg">${num} 號</span>
+                                <span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">累積 ${studentMissingEntries.length} 天有缺漏</span>
+                            </div>
+                            <div class="space-y-2">
+                                ${studentMissingEntries.map(entry => `
+                                    <div class="text-[11px] flex items-start border-l-2 border-red-200 pl-2 py-0.5">
+                                        <span class="font-bold text-gray-500 w-8 flex-shrink-0">${entry.date}日:</span>
+                                        <span class="text-gray-600">${entry.items.join('、')}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+
+            if (!foundAnyMissing) {
+                html += `<div class="text-center py-12">
+                            <div class="text-5xl mb-4">🌟</div>
+                            <p class="text-gray-400 font-bold">本月份目前完美交齊！</p>
+                         </div>`;
+            }
+
+            html += `<button onclick="closeModal()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold mt-4 shadow-lg shadow-blue-100 transition hover:bg-blue-700">關閉統計</button>`;
+            
+            content.innerHTML = html;
+            overlay.classList.remove('hidden');
+        }
+
+        function showConfig() {
+            const overlay = document.getElementById('modalOverlay');
+            const content = document.getElementById('modalContent');
+            if (!overlay || !content) return;
+
+            content.innerHTML = `
+                <h2 class="text-2xl font-bold mb-6 text-gray-800 font-black">系統設定</h2>
+                <div class="mb-4">
+                    <label class="block text-sm font-bold mb-2 text-gray-500">學生座號 (逗號分隔)</label>
+                    <textarea id="configStudentList" class="w-full border-2 rounded-xl p-3 h-24 outline-none focus:border-blue-500">${state.config.studentList.join(',')}</textarea>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-bold mb-2 text-gray-500">系統密碼</label>
+                    <input type="text" id="configPwd" class="w-full border-2 rounded-xl p-3 outline-none focus:border-blue-500" value="${state.config.password}">
+                </div>
+                <div class="p-4 bg-orange-50 rounded-2xl border border-orange-100 mb-6">
+                    <p class="text-[10px] text-orange-700 mb-3 font-medium">⚠️ 注意：重置將會清除「所有日期」的檢核記錄並載入預設 15 項科目。</p>
+                    <button onclick="forceReset()" class="w-full bg-orange-600 text-white py-2 rounded-lg font-bold text-sm">完全重置系統</button>
+                </div>
+                <div class="flex gap-3">
+                    <button onclick="closeModal()" class="flex-1 bg-gray-100 py-3 rounded-xl font-bold text-gray-400">取消</button>
+                    <button onclick="saveConfig()" class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg">儲存設定</button>
+                </div>`;
+            overlay.classList.remove('hidden');
+        }
+
+        function forceReset() {
+            showConfirmModal('確定要完全重置嗎？所有月份的記錄都會消失！', () => {
+                state.subjects = initDefaultSubjects();
+                state.history = {};
+                state.activeSubjectId = state.subjects[0].id;
+                saveData(); renderAll(); closeModal();
+            });
+        }
+
+        function saveConfig() {
+            const textarea = document.getElementById('configStudentList');
+            const pwdInput = document.getElementById('configPwd');
+            const listStr = textarea ? textarea.value : "";
+            state.config.studentList = listStr.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n) && n > 0);
+            state.config.password = pwdInput ? pwdInput.value : '1234';
+            saveData(); renderAll(); closeModal();
+        }
+
+        function exportData() {
+            const blob = new Blob([JSON.stringify(state)], {type: 'application/json'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `作業檢核全資料備份_${new Date().toLocaleDateString()}.json`;
+            a.click();
+        }
+
+        function importData() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.onchange = e => {
+                const reader = new FileReader();
+                reader.onload = ev => {
+                    try {
+                        const imported = JSON.parse(ev.target.result);
+                        if (imported.history) {
+                            state = imported;
+                            saveData(); renderAll();
+                            alert('資料還原成功！');
+                        }
+                    } catch(err) { alert('格式錯誤'); }
+                };
+                reader.readAsText(e.target.files[0]);
+            };
+            input.click();
+        }
+
+        function showConfirmModal(text, onConfirm) {
+            const overlay = document.getElementById('modalOverlay');
+            const content = document.getElementById('modalContent');
+            if (!overlay || !content) return;
+            content.innerHTML = `
+                <div class="text-center">
+                    <div class="text-4xl mb-4">⚠️</div>
+                    <p class="text-lg font-bold text-gray-700 mb-8">${text}</p>
+                    <div class="flex gap-3">
+                        <button onclick="closeModal()" class="flex-1 bg-gray-100 py-3 rounded-xl font-bold text-gray-400">取消</button>
+                        <button id="modalConfirmBtn" class="flex-1 bg-red-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-red-200">確定執行</button>
+                    </div>
+                </div>`;
+            const btn = document.getElementById('modalConfirmBtn');
+            if (btn) {
+                btn.onclick = () => { onConfirm(); closeModal(); };
+            }
+            overlay.classList.remove('hidden');
+        }
+
+        function lockSystem() { 
+            const lock = document.getElementById('lockScreen');
+            if (lock) lock.classList.remove('hidden'); 
+        }
+
+        function unlockSystem() {
+            const input = document.getElementById('unlockPwd');
+            const error = document.getElementById('lockError');
+            const lock = document.getElementById('lockScreen');
+            if (input && input.value === state.config.password) {
+                if (lock) lock.classList.add('hidden');
+                if (error) error.classList.add('hidden');
+                input.value = "";
+            } else { 
+                if (error) error.classList.remove('hidden'); 
+            }
+        }
+
+        function closeModal() { 
+            const overlay = document.getElementById('modalOverlay');
+            if (overlay) overlay.classList.add('hidden'); 
+        }
+
+        function updateTime() {
+            const el = document.getElementById('currentTime');
+            if (!el) return; 
+            const now = new Date();
+            el.innerText = now.toLocaleString('zh-TW', {
+                year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            setInterval(updateTime, 10000);
+        });
+
+        if (document.readyState === "complete" || document.readyState === "interactive") {
+            loadData();
+        }
+    </script>
+</body>
+</html>
